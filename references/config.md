@@ -18,6 +18,7 @@ All variables are optional. Defaults target a local Ollama on this machine.
 | General text | `qwen2.5-coder:14b` | Default: reliable JSON labels, good code and prose extraction |
 | Lighter text | `qwen3.5:9b` | Faster, but on this setup it returns empty label responses |
 | Images / diagrams | `qwen3-vl:8b` | Only model used when images are present |
+| Larger local model | `smtek/Qwen3.8-27B:Q3_K_M` | Tested end-to-end; ~1 min on a small corpus |
 | Larger budget | `gpt-oss:20b` | More RAM, better long-document recall |
 
 Switch with an environment variable, without editing files:
@@ -71,7 +72,8 @@ code off the machine.
 **`--update` and documents**
 
 `--update` re-extracts code only. Documents, PDFs, and images keep their previous
-extraction until a full `build`.
+extraction until a full `build`. `--code-only` and `--deep` are ignored with
+`--update`, and the wrapper prints a warning when you combine them.
 
 **Graphify flags changed**
 

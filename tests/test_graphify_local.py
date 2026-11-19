@@ -148,7 +148,7 @@ class DoctorTests(unittest.TestCase):
         cfg = gl.load_config({})
         env = gl.graphify_env(cfg, vision=True)
         self.assertEqual(env["OLLAMA_BASE_URL"], cfg.base_url)
-        self.assertEqual(env["OLLAMA_MODEL"], cfg.model)
+        self.assertEqual(env["OLLAMA_MODEL"], cfg.vision_model)
         self.assertEqual(env["GRAPHIFY_OLLAMA_NUM_CTX"], "32768")
         self.assertEqual(env["GRAPHIFY_OLLAMA_VISION"], "1")
         self.assertNotIn("GRAPHIFY_OLLAMA_VISION", gl.graphify_env(cfg, vision=False))
@@ -311,3 +311,74 @@ class BuildLabelTests(unittest.TestCase):
                  mock.patch.object(gl, "run_capture", return_value=(0, "warning: community labeling failed; using placeholders")), \
                  mock.patch("sys.stderr"):
                 self.assertEqual(gl.cmd_build(project, code_only=False, deep=False, update=False), 1)
+
+
+class PolishTests(unittest.TestCase):
+    def test_update_warns_ignored_flags(self):
+        with tempfile.TemporaryDirectory() as d, \
+             mock.patch.object(gl, "_require_graphify", return_value=True), \
+             mock.patch.object(gl, "run", return_value=0), \
+             mock.patch("sys.stderr") as err:
+            rc = gl.cmd_build(Path(d), code_only=True, deep=True, update=True)
+        self.assertEqual(rc, 0)
+        message = " ".join(str(c.args[0]) for c in err.write.call_args_list)
+        self.assertIn("--code-only", message)
+        self.assertIn("--deep", message)
+
+    def test_status_reports_unreadable_graph(self):
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            out = project / "graphify-out"
+            out.mkdir()
+            (out / "graph.json").write_text("not json")
+            self.assertEqual(gl.cmd_status(project), 1)
+
+    def test_label_and_update_commands_exact(self):
+        cfg = gl.load_config({})
+        label = gl.build_label_command(Path("/p"), "m", cfg)
+        self.assertEqual(
+            label,
+            ["graphify", "label", "/p", "--backend", "ollama", "--model", "m", "--max-concurrency", "1"],
+        )
+        update = gl.build_update_command(Path("/p"))
+        self.assertEqual(update, ["graphify", "update", "/p"])
+
+    def test_config_command(self):
+        cfg = gl.load_config({})
+        with mock.patch("sys.stdout") as out:
+            self.assertEqual(gl.cmd_config(cfg), 0)
+        text = " ".join(str(c.args[0]) for c in out.write.call_args_list)
+        self.assertIn(cfg.model, text)
+        self.assertIn(str(cfg.num_ctx), text)
+
+    def test_label_success_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            (project / "graphify-out").mkdir()
+            (project / "graphify-out" / "graph.json").write_text('{"nodes": [], "links": []}')
+            cfg = gl.load_config({})
+            with mock.patch.object(gl, "_require_graphify", return_value=True), \
+                 mock.patch.object(gl, "fetch_models", return_value=[cfg.model]), \
+                 mock.patch.object(gl, "run_capture", return_value=(0, "Done")):
+                self.assertEqual(gl.cmd_label(project), 0)
+
+    def test_build_code_only_with_non_ascii_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            project = root / "prògètto"
+            project.mkdir()
+            (project / "a.py").write_text("def a(): pass\n")
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            record = root / "args.txt"
+            CliTests._fake_graphify(self, bin_dir, record)
+            with mock.patch.dict(os.environ, {"PATH": f"{bin_dir}:/usr/bin:/bin"}), \
+                 mock.patch.object(gl, "_print_summary"):
+                rc = gl.main(["build", str(project), "--code-only"])
+            self.assertEqual(rc, 0)
+            self.assertIn("prògètto", record.read_text())
+
+    def test_env_vision_uses_vision_model(self):
+        cfg = gl.load_config({})
+        self.assertEqual(gl.graphify_env(cfg, vision=True)["OLLAMA_MODEL"], cfg.vision_model)
+        self.assertEqual(gl.graphify_env(cfg, vision=False)["OLLAMA_MODEL"], cfg.model)

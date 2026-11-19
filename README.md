@@ -43,12 +43,15 @@ offline. The default `build` also extracts documents and images through
 Ollama and therefore needs the `openai` package shipped by the
 `graphifyy[ollama]` extra; `graphify-local doctor` checks it.
 
+Tested locally with `qwen2.5-coder:14b` (default) and
+`smtek/Qwen3.8-27B:Q3_K_M` (slower, larger).
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | Missing prerequisite (graph, model, backend package) or command failure |
+| `1` | Missing prerequisite (graph, model, backend package), unreadable graph, or command failure |
 | `2` | Invalid configuration (non-local endpoint, non-integer setting) |
 
 `query` also propagates Graphify's own codes: `3` for an ambiguous name and

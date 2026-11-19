@@ -191,7 +191,7 @@ def run_capture(
 def graphify_env(cfg: Config, *, vision: bool) -> dict[str, str]:
     env = dict(os.environ)
     env["OLLAMA_BASE_URL"] = cfg.base_url
-    env["OLLAMA_MODEL"] = cfg.model
+    env["OLLAMA_MODEL"] = cfg.vision_model if vision else cfg.model
     env["GRAPHIFY_OLLAMA_NUM_CTX"] = str(cfg.num_ctx)
     if vision:
         env["GRAPHIFY_OLLAMA_VISION"] = "1"
@@ -223,8 +223,9 @@ def cmd_status(path: Path) -> int:
         return 1
     print(f"grafo: {graph_path}")
     print(f"dimensione: {size} byte")
-    print(summarize_graph(graph_path))
-    return 0
+    summary = summarize_graph(graph_path)
+    print(summary)
+    return 1 if summary.startswith("graph.json illeggibile") else 0
 
 
 def cmd_doctor(cfg: Config, env: Mapping[str, str] | None = None) -> int:
@@ -337,6 +338,13 @@ def cmd_build(path: Path, *, code_only: bool, deep: bool, update: bool) -> int:
             "attenzione: update ri-estrae solo il codice; i documenti non vengono aggiornati",
             file=sys.stderr,
         )
+        ignored = []
+        if code_only:
+            ignored.append("--code-only")
+        if deep:
+            ignored.append("--deep")
+        if ignored:
+            print(f"attenzione: --update ignora {', '.join(ignored)}", file=sys.stderr)
         if not _require_graphify():
             return 1
         rc = run(build_update_command(project))
