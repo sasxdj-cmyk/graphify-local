@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -151,3 +153,107 @@ def summarize_graph(graph_path: Path) -> str:
     nodes = data.get("nodes") if isinstance(data, dict) else None
     edges = data.get("edges") if isinstance(data, dict) else None
     return f"{len(nodes) if isinstance(nodes, list) else 0} nodi, {len(edges) if isinstance(edges, list) else 0} archi"
+
+
+def run(cmd: Sequence[str], env: Mapping[str, str] | None = None, cwd: Path | None = None) -> int:
+    completed = subprocess.run(list(cmd), env=None if env is None else dict(env), cwd=cwd)
+    return completed.returncode
+
+
+def run_capture(
+    cmd: Sequence[str],
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+) -> tuple[int, str]:
+    completed = subprocess.run(
+        list(cmd),
+        env=None if env is None else dict(env),
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return completed.returncode, completed.stdout or ""
+
+
+def graphify_env(cfg: Config, *, vision: bool) -> dict[str, str]:
+    env = dict(os.environ)
+    env["OLLAMA_BASE_URL"] = cfg.base_url
+    env["OLLAMA_MODEL"] = cfg.model
+    env["GRAPHIFY_OLLAMA_NUM_CTX"] = str(cfg.num_ctx)
+    if vision:
+        env["GRAPHIFY_OLLAMA_VISION"] = "1"
+    else:
+        env.pop("GRAPHIFY_OLLAMA_VISION", None)
+    return env
+
+
+def cmd_config(cfg: Config) -> int:
+    print(f"modello: {cfg.model}")
+    print(f"modello vision: {cfg.vision_model}")
+    print(f"base url: {cfg.base_url}")
+    print(f"num ctx: {cfg.num_ctx}")
+    print(f"timeout: {cfg.timeout}")
+    print(f"max concurrency: {cfg.max_concurrency}")
+    return 0
+
+
+def cmd_status(path: Path) -> int:
+    graph_path = Path(path) / "graphify-out" / "graph.json"
+    if not graph_path.is_file():
+        print(f"nessun grafo: atteso {graph_path}")
+        print("esegui: graphify-local build")
+        return 1
+    size = graph_path.stat().st_size
+    print(f"grafo: {graph_path}")
+    print(f"dimensione: {size} byte")
+    print(summarize_graph(graph_path))
+    return 0
+
+
+def cmd_doctor(cfg: Config, env: Mapping[str, str] | None = None) -> int:
+    ok = True
+
+    graphify_path = shutil.which("graphify")
+    if graphify_path:
+        print(f"OK   graphify: {graphify_path}")
+    else:
+        print("FAIL graphify: non trovato nel PATH (uv tool install graphifyy)")
+        ok = False
+
+    if is_loopback_url(cfg.base_url):
+        print(f"OK   endpoint: {cfg.base_url}")
+    else:
+        print(f"FAIL endpoint: {cfg.base_url} non e' locale; sono ammessi solo localhost/127.0.0.1/::1")
+        return 2
+
+    try:
+        models = fetch_models(cfg.base_url, timeout=5.0)
+    except (OSError, ValueError) as exc:
+        print(f"FAIL ollama: {exc} (avvia Ollama con: systemctl start ollama)")
+        models = None
+        ok = False
+    else:
+        print(f"OK   ollama: {len(models)} modelli disponibili")
+
+    if models is not None:
+        for label, name in (("modello", cfg.model), ("modello vision", cfg.vision_model)):
+            if model_present(models, name):
+                print(f"OK   {label}: {name}")
+            else:
+                print(f"FAIL {label}: {name} assente; ollama pull {name}")
+                ok = False
+
+    if graphify_path:
+        code, help_text = run_capture(["graphify", "--help"])
+        if code != 0:
+            print(f"FAIL graphify --help: exit {code}")
+            ok = False
+        for flag in ("--code-only", "--backend", "--max-concurrency", "--api-timeout", "--mode"):
+            if flag in help_text:
+                print(f"OK   flag: {flag}")
+            else:
+                print(f"FAIL flag: {flag} non supportato da questa versione di graphify")
+                ok = False
+
+    return 0 if ok else 1

@@ -1,6 +1,7 @@
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -85,3 +86,59 @@ class CorpusTests(unittest.TestCase):
             self.assertEqual(gl.summarize_graph(g), "2 nodi, 1 archi")
             g.write_text("not json")
             self.assertIn("illeggibile", gl.summarize_graph(g))
+
+
+class DoctorTests(unittest.TestCase):
+    def test_doctor_ok_with_models(self):
+        cfg = gl.load_config({})
+        help_text = (
+            "--code-only --backend --max-concurrency --api-timeout --mode"
+        )
+        with mock.patch.object(gl.shutil, "which", return_value="/usr/bin/graphify"), \
+             mock.patch.object(gl, "fetch_models", return_value=[cfg.model, cfg.vision_model]), \
+             mock.patch.object(gl, "run_capture", return_value=(0, help_text)):
+            self.assertEqual(gl.cmd_doctor(cfg, {"PATH": "/usr/bin:/bin"}), 0)
+
+    def test_doctor_reports_missing_model(self):
+        cfg = gl.load_config({})
+        help_text = (
+            "--code-only --backend --max-concurrency --api-timeout --mode"
+        )
+        with mock.patch.object(gl.shutil, "which", return_value="/usr/bin/graphify"), \
+             mock.patch.object(gl, "fetch_models", return_value=["altro:1b"]), \
+             mock.patch.object(gl, "run_capture", return_value=(0, help_text)):
+            self.assertEqual(gl.cmd_doctor(cfg, {}), 1)
+
+    def test_doctor_handles_unreachable_ollama(self):
+        cfg = gl.load_config({})
+        help_text = (
+            "--code-only --backend --max-concurrency --api-timeout --mode"
+        )
+        with mock.patch.object(gl.shutil, "which", return_value="/usr/bin/graphify"), \
+             mock.patch.object(gl, "fetch_models", side_effect=OSError("connection refused")), \
+             mock.patch.object(gl, "run_capture", return_value=(0, help_text)):
+            self.assertEqual(gl.cmd_doctor(cfg, {}), 1)
+
+    def test_doctor_rejects_remote_url(self):
+        cfg = gl.load_config({"GRAPHIFY_LOCAL_BASE_URL": "http://10.0.0.5:11434/v1"})
+        with mock.patch.object(gl.shutil, "which", return_value="/usr/bin/graphify"), \
+             mock.patch.object(gl, "run_capture", return_value=(0, "")):
+            self.assertEqual(gl.cmd_doctor(cfg, {}), 2)
+
+    def test_status_missing_and_present(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.assertEqual(gl.cmd_status(root), 1)
+            out = root / "graphify-out"
+            out.mkdir()
+            (out / "graph.json").write_text('{"nodes": [], "edges": []}')
+            self.assertEqual(gl.cmd_status(root), 0)
+
+    def test_env_sets_ollama_and_vision(self):
+        cfg = gl.load_config({})
+        env = gl.graphify_env(cfg, vision=True)
+        self.assertEqual(env["OLLAMA_BASE_URL"], cfg.base_url)
+        self.assertEqual(env["OLLAMA_MODEL"], cfg.model)
+        self.assertEqual(env["GRAPHIFY_OLLAMA_NUM_CTX"], "32768")
+        self.assertEqual(env["GRAPHIFY_OLLAMA_VISION"], "1")
+        self.assertNotIn("GRAPHIFY_OLLAMA_VISION", gl.graphify_env(cfg, vision=False))
