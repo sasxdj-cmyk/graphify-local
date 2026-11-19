@@ -6,8 +6,12 @@ import json
 import os
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping, Sequence
 from urllib.parse import urlparse
+
+_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_SKIP_DIRS = {".git", "node_modules", "graphify-out", ".venv", "venv", "__pycache__"}
 
 
 @dataclass(frozen=True)
@@ -69,3 +73,81 @@ def fetch_models(base_url: str, timeout: float = 5.0) -> list[str]:
 
 def model_present(models: Sequence[str], name: str) -> bool:
     return name in models
+
+
+def detect_images(root: Path) -> bool:
+    root = Path(root)
+    if not root.exists():
+        return False
+    for entry in root.rglob("*"):
+        if any(part in _SKIP_DIRS for part in entry.parts):
+            continue
+        if entry.is_file() and entry.suffix.lower() in _IMAGE_SUFFIXES:
+            return True
+    return False
+
+
+def resolve_model(cfg: Config, root: Path, code_only: bool) -> tuple[str, bool]:
+    if code_only:
+        return cfg.model, False
+    if detect_images(Path(root)):
+        return cfg.vision_model, True
+    return cfg.model, False
+
+
+def build_extract_command(
+    path: Path,
+    model: str,
+    cfg: Config,
+    *,
+    code_only: bool,
+    deep: bool,
+) -> list[str]:
+    command = ["graphify", "extract", str(path)]
+    if code_only:
+        command.append("--code-only")
+    else:
+        command.extend(
+            [
+                "--backend",
+                "ollama",
+                "--model",
+                model,
+                "--max-concurrency",
+                str(cfg.max_concurrency),
+                "--api-timeout",
+                str(cfg.timeout),
+            ]
+        )
+    if deep:
+        command.extend(["--mode", "deep"])
+    return command
+
+
+def build_label_command(path: Path, model: str, cfg: Config) -> list[str]:
+    return [
+        "graphify",
+        "label",
+        str(path),
+        "--backend",
+        "ollama",
+        "--model",
+        model,
+        "--max-concurrency",
+        str(cfg.max_concurrency),
+    ]
+
+
+def build_update_command(path: Path) -> list[str]:
+    return ["graphify", "update", str(path)]
+
+
+def summarize_graph(graph_path: Path) -> str:
+    path = Path(graph_path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return f"graph.json illeggibile: {path}"
+    nodes = data.get("nodes") if isinstance(data, dict) else None
+    edges = data.get("edges") if isinstance(data, dict) else None
+    return f"{len(nodes) if isinstance(nodes, list) else 0} nodi, {len(edges) if isinstance(edges, list) else 0} archi"

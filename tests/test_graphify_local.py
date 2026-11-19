@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -39,3 +40,48 @@ class ConfigTests(unittest.TestCase):
     def test_model_present(self):
         self.assertTrue(gl.model_present(["qwen3.5:9b", "x"], "qwen3.5:9b"))
         self.assertFalse(gl.model_present(["qwen3.5:9b-q8_0"], "qwen3.5:9b"))
+
+
+class CorpusTests(unittest.TestCase):
+    def test_detect_images_ignores_graphify_out(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "graphify-out").mkdir()
+            (root / "graphify-out" / "x.png").write_bytes(b"")
+            self.assertFalse(gl.detect_images(root))
+            (root / "a.png").write_bytes(b"")
+            self.assertTrue(gl.detect_images(root))
+
+    def test_resolve_model_prefers_vision_for_images(self):
+        cfg = gl.load_config({})
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.assertEqual(gl.resolve_model(cfg, root, False), (cfg.model, False))
+            (root / "a.webp").write_bytes(b"")
+            self.assertEqual(gl.resolve_model(cfg, root, False), (cfg.vision_model, True))
+            self.assertEqual(gl.resolve_model(cfg, root, True), (cfg.model, False))
+
+    def test_extract_command_flags(self):
+        cfg = gl.load_config({})
+        cmd = gl.build_extract_command(Path("/p"), "m", cfg, code_only=True, deep=False)
+        self.assertEqual(cmd[0], "graphify")
+        self.assertIn("extract", cmd)
+        self.assertIn("--code-only", cmd)
+        self.assertNotIn("--mode", cmd)
+
+        cmd = gl.build_extract_command(Path("/p"), "m", cfg, code_only=False, deep=True)
+        self.assertIn("ollama", cmd)
+        self.assertIn("--backend", cmd)
+        self.assertIn("--model", cmd)
+        self.assertIn("--max-concurrency", cmd)
+        self.assertIn("--api-timeout", cmd)
+        self.assertIn("--mode", cmd)
+        self.assertIn("deep", cmd)
+
+    def test_summary_counts_and_malformed(self):
+        with tempfile.TemporaryDirectory() as d:
+            g = Path(d) / "graph.json"
+            g.write_text('{"nodes": [{}, {}], "edges": [{}]}')
+            self.assertEqual(gl.summarize_graph(g), "2 nodi, 1 archi")
+            g.write_text("not json")
+            self.assertIn("illeggibile", gl.summarize_graph(g))
