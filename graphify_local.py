@@ -42,7 +42,7 @@ def _int_value(env: Mapping[str, str], name: str, default: int) -> int:
 def load_config(env: Mapping[str, str] | None = None) -> Config:
     source = os.environ if env is None else env
     return Config(
-        model=source.get("GRAPHIFY_LOCAL_MODEL") or "qwen3.5:9b",
+        model=source.get("GRAPHIFY_LOCAL_MODEL") or "qwen2.5-coder:14b",
         vision_model=source.get("GRAPHIFY_LOCAL_VISION_MODEL") or "qwen3-vl:8b",
         base_url=source.get("GRAPHIFY_LOCAL_BASE_URL") or "http://127.0.0.1:11434/v1",
         num_ctx=_int_value(source, "GRAPHIFY_LOCAL_NUM_CTX", 32768),
@@ -379,7 +379,7 @@ def cmd_build(path: Path, *, code_only: bool, deep: bool, update: bool) -> int:
     if rc != 0:
         return rc
 
-    rc = run(build_label_command(project, model, cfg), env=env)
+    rc = _label_communities(project, cfg, model, env)
     if rc != 0:
         return rc
 
@@ -409,6 +409,21 @@ def cmd_query(question: str, path: Path, budget: int) -> int:
     )
 
 
+def _label_communities(project: Path, cfg: Config, model: str, env: Mapping[str, str]) -> int:
+    rc, output = run_capture(build_label_command(project, model, cfg), env=env)
+    if rc != 0:
+        return rc
+    lowered = output.lower()
+    if "labeling failed" in lowered or "placeholders" in lowered:
+        print(
+            "attenzione: labeling delle community fallito; restano etichette segnaposto",
+            file=sys.stderr,
+        )
+        print(output.strip(), file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_label(path: Path) -> int:
     project = Path(path).resolve()
     graph_path = _graph_path(project)
@@ -424,21 +439,7 @@ def cmd_label(path: Path) -> int:
         return 2
     if not _require_model(cfg, cfg.model):
         return 1
-    rc, output = run_capture(
-        build_label_command(project, cfg.model, cfg),
-        env=graphify_env(cfg, vision=False),
-    )
-    if rc != 0:
-        return rc
-    lowered = output.lower()
-    if "labeling failed" in lowered or "placeholders" in lowered:
-        print(
-            "attenzione: labeling delle community fallito; restano etichette segnaposto",
-            file=sys.stderr,
-        )
-        print(output.strip(), file=sys.stderr)
-        return 1
-    return 0
+    return _label_communities(project, cfg, cfg.model, graphify_env(cfg, vision=False))
 
 
 def main(argv: Sequence[str] | None = None) -> int:

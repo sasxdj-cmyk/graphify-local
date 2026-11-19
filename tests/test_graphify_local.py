@@ -14,7 +14,7 @@ import graphify_local as gl
 class ConfigTests(unittest.TestCase):
     def test_defaults_match_design(self):
         cfg = gl.load_config({})
-        self.assertEqual(cfg.model, "qwen3.5:9b")
+        self.assertEqual(cfg.model, "qwen2.5-coder:14b")
         self.assertEqual(cfg.vision_model, "qwen3-vl:8b")
         self.assertEqual(cfg.base_url, "http://127.0.0.1:11434/v1")
         self.assertEqual(cfg.num_ctx, 32768)
@@ -294,3 +294,20 @@ class FixPassTests(unittest.TestCase):
             graph.write_text('{"nodes": [], "links": []}')
             with mock.patch.object(Path, "stat", side_effect=FileNotFoundError("gone")):
                 self.assertEqual(gl.cmd_status(project), 1)
+
+
+class BuildLabelTests(unittest.TestCase):
+    def test_build_reports_label_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            (project / "graphify-out").mkdir()
+            (project / "graphify-out" / "graph.json").write_text('{"nodes": [], "links": []}')
+            cfg = gl.load_config({})
+            with mock.patch.object(gl, "_require_graphify", return_value=True), \
+                 mock.patch.object(gl, "ollama_extra_available", return_value=True), \
+                 mock.patch.object(gl, "fetch_models", return_value=[cfg.model]), \
+                 mock.patch.object(gl, "resolve_model", return_value=(cfg.model, False)), \
+                 mock.patch.object(gl, "run", return_value=0), \
+                 mock.patch.object(gl, "run_capture", return_value=(0, "warning: community labeling failed; using placeholders")), \
+                 mock.patch("sys.stderr"):
+                self.assertEqual(gl.cmd_build(project, code_only=False, deep=False, update=False), 1)

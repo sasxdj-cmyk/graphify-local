@@ -4,7 +4,7 @@ All variables are optional. Defaults target a local Ollama on this machine.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `GRAPHIFY_LOCAL_MODEL` | `qwen3.5:9b` | Text model for documents and community labeling |
+| `GRAPHIFY_LOCAL_MODEL` | `qwen2.5-coder:14b` | Text model for documents and community labeling |
 | `GRAPHIFY_LOCAL_VISION_MODEL` | `qwen3-vl:8b` | Model used when the corpus contains images |
 | `GRAPHIFY_LOCAL_BASE_URL` | `http://127.0.0.1:11434/v1` | OpenAI-compatible endpoint; loopback only |
 | `GRAPHIFY_LOCAL_NUM_CTX` | `32768` | Context window passed to the backend |
@@ -15,15 +15,15 @@ All variables are optional. Defaults target a local Ollama on this machine.
 
 | Use | Model | Notes |
 |---|---|---|
-| General text | `qwen3.5:9b` | Good default on 16 GB VRAM |
-| Code understanding | `qwen2.5-coder:14b` | Better on code-heavy docs, slower |
+| General text | `qwen2.5-coder:14b` | Default: reliable JSON labels, good code and prose extraction |
+| Lighter text | `qwen3.5:9b` | Faster, but on this setup it returns empty label responses |
 | Images / diagrams | `qwen3-vl:8b` | Only model used when images are present |
 | Larger budget | `gpt-oss:20b` | More RAM, better long-document recall |
 
 Switch with an environment variable, without editing files:
 
 ```bash
-GRAPHIFY_LOCAL_MODEL=qwen2.5-coder:14b graphify-local build .
+GRAPHIFY_LOCAL_MODEL=qwen3.5:9b graphify-local build .
 ```
 
 ## Troubleshooting

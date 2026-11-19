@@ -12,7 +12,7 @@ Repository: <https://github.com/sasxdj-cmyk/graphify-local>
 - [Graphify](https://github.com/Graphify-Labs/graphify) with the Ollama extra:
   `uv tool install "graphifyy[ollama]" --force`
 - [Ollama](https://ollama.com) running locally
-- A text model (default `qwen3.5:9b`) and, for images, a vision model
+- A text model (default `qwen2.5-coder:14b`) and, for images, a vision model
   (default `qwen3-vl:8b`)
 
 ## Install
