@@ -153,7 +153,11 @@ def summarize_graph(graph_path: Path) -> str:
     except (OSError, ValueError):
         return f"graph.json illeggibile: {path}"
     nodes = data.get("nodes") if isinstance(data, dict) else None
-    edges = data.get("edges") if isinstance(data, dict) else None
+    edges = None
+    if isinstance(data, dict):
+        edges = data.get("edges")
+        if not isinstance(edges, list):
+            edges = data.get("links")
     return f"{len(nodes) if isinstance(nodes, list) else 0} nodi, {len(edges) if isinstance(edges, list) else 0} archi"
 
 

@@ -88,6 +88,12 @@ class CorpusTests(unittest.TestCase):
             g.write_text("not json")
             self.assertIn("illeggibile", gl.summarize_graph(g))
 
+    def test_summary_counts_networkx_links(self):
+        with tempfile.TemporaryDirectory() as d:
+            g = Path(d) / "graph.json"
+            g.write_text('{"nodes": [{}, {}, {}], "links": [{}, {}]}')
+            self.assertEqual(gl.summarize_graph(g), "3 nodi, 2 archi")
+
 
 class DoctorTests(unittest.TestCase):
     def test_doctor_ok_with_models(self):
@@ -202,3 +208,19 @@ class CliTests(unittest.TestCase):
                 rc = gl.cmd_build(project, code_only=False, deep=False, update=True)
             self.assertEqual(rc, 0)
             self.assertIn("documenti", err.write.call_args_list[0].args[0].lower())
+
+
+class SkillTests(unittest.TestCase):
+    def test_skill_frontmatter_and_size(self):
+        text = (ROOT / "SKILL.md").read_text()
+        self.assertTrue(text.startswith("---\n"))
+        front = text.split("---", 2)[1]
+        self.assertIn("name: graphify-local", front)
+        self.assertIn("description:", front)
+        self.assertLess(len(text), 6000)
+
+    def test_documented_commands_exist(self):
+        expected = {"doctor", "build", "query", "label", "status", "config"}
+        text = (ROOT / "SKILL.md").read_text()
+        for name in expected:
+            self.assertIn(f"graphify-local {name}", text)
