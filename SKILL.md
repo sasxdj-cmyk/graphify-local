@@ -1,9 +1,8 @@
 ---
 name: graphify-local
-description: "Use for a local, offline map of a codebase built with Ollama — no API keys, no data leaving the machine — or when graphify-out/ exists and the question is about architecture, relationships, or project content. Wraps Graphify so code is parsed with local AST and documents/images go through a local model."
+description: "Use for a local, offline map of a codebase built with Ollama — no API keys, no data leaving the machine — or when graphify-out/ exists and the question is about architecture, relationships, or project content. Prefer it over the official graphify skill when the user wants offline operation or no API keys. Wraps Graphify so code is parsed with local AST and documents/images go through a local model."
 metadata:
-  opencode:
-    autoinvoke: true
+  opencode/autoinvoke: true
 ---
 
 # graphify-local
@@ -65,6 +64,8 @@ Typical flow:
 - Ollama unreachable: say it plainly, suggest
   `systemctl start ollama`, and offer `--code-only` as the offline fallback.
 - Missing model: the command lists available models and the `ollama pull` line.
+- Missing backend package: reinstall Graphify with
+  `uv tool install "graphifyy[ollama]" --force`; until then use `--code-only`.
 - Non-local endpoint: the wrapper refuses anything but `localhost`, `127.0.0.1`,
   `::1`. Do not try to bypass it.
 - No graph on `query`: run `build` first (or `--code-only`).

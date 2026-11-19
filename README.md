@@ -9,7 +9,8 @@ Repository: <https://github.com/sasxdj-cmyk/graphify-local>
 ## Requirements
 
 - Python 3.10+
-- [Graphify](https://github.com/Graphify-Labs/graphify) (`uv tool install graphifyy`)
+- [Graphify](https://github.com/Graphify-Labs/graphify) with the Ollama extra:
+  `uv tool install "graphifyy[ollama]" --force`
 - [Ollama](https://ollama.com) running locally
 - A text model (default `qwen3.5:9b`) and, for images, a vision model
   (default `qwen3-vl:8b`)
@@ -21,8 +22,10 @@ Repository: <https://github.com/sasxdj-cmyk/graphify-local>
 ```
 
 This symlinks the repository into
-`~/.config/opencode/skills/graphify-local` so OpenCode discovers the skill.
-Remove it with `./install.sh --uninstall`.
+`~/.config/opencode/skills/graphify-local` so OpenCode discovers the skill,
+and links the `graphify-local` launcher into `~/.local/bin` (or
+`$XDG_BIN_HOME`). Make sure that directory is on your `PATH`.
+Remove both with `./install.sh --uninstall`.
 
 ## Commands
 
@@ -37,7 +40,19 @@ graphify-local config
 
 `build --code-only` uses only the local AST pass: no model, no tokens, fully
 offline. The default `build` also extracts documents and images through
-Ollama.
+Ollama and therefore needs the `openai` package shipped by the
+`graphifyy[ollama]` extra; `graphify-local doctor` checks it.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Missing prerequisite (graph, model, backend package) or command failure |
+| `2` | Invalid configuration (non-local endpoint, non-integer setting) |
+
+`query` also propagates Graphify's own codes: `3` for an ambiguous name and
+`4` when no node matches.
 
 ## Privacy
 

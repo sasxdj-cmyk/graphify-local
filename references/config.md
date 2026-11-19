@@ -48,6 +48,16 @@ installa con: ollama pull qwen3.5:9b
 
 Install it, or point `GRAPHIFY_LOCAL_MODEL` at one of the listed models.
 
+**`openai` package missing**
+
+```text
+errore: il backend ollama richiede il pacchetto openai
+installa con: uv tool install "graphifyy[ollama]" --force
+```
+
+The Ollama backend is an optional Graphify extra. Reinstall Graphify with it;
+`--code-only` keeps working without it.
+
 **Remote endpoint refused**
 
 Any host other than `localhost`, `127.0.0.1`, `::1`, or `127.*` is rejected

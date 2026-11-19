@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import shutil
@@ -58,7 +59,12 @@ def is_loopback_url(url: str) -> bool:
     if parsed.scheme not in ("http", "https"):
         return False
     host = (parsed.hostname or "").lower()
-    return host in {"localhost", "127.0.0.1", "::1"} or host.startswith("127.")
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def fetch_models(base_url: str, timeout: float = 5.0) -> list[str]:
@@ -84,7 +90,7 @@ def detect_images(root: Path) -> bool:
     if not root.exists():
         return False
     for entry in root.rglob("*"):
-        if any(part in _SKIP_DIRS for part in entry.parts):
+        if any(part in _SKIP_DIRS for part in entry.relative_to(root).parts):
             continue
         if entry.is_file() and entry.suffix.lower() in _IMAGE_SUFFIXES:
             return True
@@ -210,7 +216,11 @@ def cmd_status(path: Path) -> int:
         print(f"nessun grafo: atteso {graph_path}")
         print("esegui: graphify-local build")
         return 1
-    size = graph_path.stat().st_size
+    try:
+        size = graph_path.stat().st_size
+    except OSError as exc:
+        print(f"errore: impossibile leggere {graph_path}: {exc}", file=sys.stderr)
+        return 1
     print(f"grafo: {graph_path}")
     print(f"dimensione: {size} byte")
     print(summarize_graph(graph_path))
@@ -220,12 +230,23 @@ def cmd_status(path: Path) -> int:
 def cmd_doctor(cfg: Config, env: Mapping[str, str] | None = None) -> int:
     ok = True
 
-    graphify_path = shutil.which("graphify")
+    which_env = os.environ if env is None else env
+    graphify_path = shutil.which("graphify", path=which_env.get("PATH"))
     if graphify_path:
         print(f"OK   graphify: {graphify_path}")
     else:
         print("FAIL graphify: non trovato nel PATH (uv tool install graphifyy)")
         ok = False
+
+    if graphify_path:
+        if ollama_extra_available(graphify_path):
+            print("OK   backend ollama: extra openai presente")
+        else:
+            print(
+                'FAIL backend ollama: manca il pacchetto openai; '
+                'esegui: uv tool install "graphifyy[ollama]" --force'
+            )
+            ok = False
 
     if is_loopback_url(cfg.base_url):
         print(f"OK   endpoint: {cfg.base_url}")
@@ -299,11 +320,19 @@ def _require_model(cfg: Config, model: str) -> bool:
     return True
 
 
+def _print_remote_error(base_url: str) -> None:
+    print(f"errore: endpoint non locale: {base_url}", file=sys.stderr)
+    print("sono ammessi solo localhost, 127.0.0.1 e ::1", file=sys.stderr)
+
+
 def cmd_build(path: Path, *, code_only: bool, deep: bool, update: bool) -> int:
     project = Path(path).resolve()
     cfg = load_config()
 
     if update:
+        if not is_loopback_url(cfg.base_url):
+            _print_remote_error(cfg.base_url)
+            return 2
         print(
             "attenzione: update ri-estrae solo il codice; i documenti non vengono aggiornati",
             file=sys.stderr,
@@ -327,12 +356,16 @@ def cmd_build(path: Path, *, code_only: bool, deep: bool, update: bool) -> int:
         return 0
 
     if not is_loopback_url(cfg.base_url):
+        _print_remote_error(cfg.base_url)
+        return 2
+
+    if not ollama_extra_available():
         print(
-            f"errore: endpoint non locale: {cfg.base_url}",
+            "errore: il backend ollama richiede il pacchetto openai",
             file=sys.stderr,
         )
-        print("sono ammessi solo localhost, 127.0.0.1 e ::1", file=sys.stderr)
-        return 2
+        print('installa con: uv tool install "graphifyy[ollama]" --force', file=sys.stderr)
+        return 1
 
     model, vision = resolve_model(cfg, project, code_only=False)
     if not _require_model(cfg, model):
@@ -391,7 +424,21 @@ def cmd_label(path: Path) -> int:
         return 2
     if not _require_model(cfg, cfg.model):
         return 1
-    return run(build_label_command(project, cfg.model, cfg), env=graphify_env(cfg, vision=False))
+    rc, output = run_capture(
+        build_label_command(project, cfg.model, cfg),
+        env=graphify_env(cfg, vision=False),
+    )
+    if rc != 0:
+        return rc
+    lowered = output.lower()
+    if "labeling failed" in lowered or "placeholders" in lowered:
+        print(
+            "attenzione: labeling delle community fallito; restano etichette segnaposto",
+            file=sys.stderr,
+        )
+        print(output.strip(), file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -441,3 +488,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         print(f"errore: {exc}", file=sys.stderr)
         return 2
+
+
+def _graphify_python(graphify_path: str) -> str | None:
+    try:
+        first_line = Path(graphify_path).read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, IndexError):
+        return None
+    if not first_line.startswith("#!"):
+        return None
+    parts = first_line[2:].strip().split()
+    if not parts:
+        return None
+    interpreter = parts[0]
+    if Path(interpreter).name == "env" and len(parts) > 1:
+        interpreter = parts[1]
+    return interpreter
+
+
+def ollama_extra_available(graphify_path: str | None = None) -> bool:
+    path = graphify_path or shutil.which("graphify")
+    if not path:
+        return False
+    interpreter = _graphify_python(path)
+    if not interpreter:
+        return False
+    code, _ = run_capture([interpreter, "-c", "import openai"])
+    return code == 0

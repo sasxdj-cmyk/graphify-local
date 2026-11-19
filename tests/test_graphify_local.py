@@ -103,6 +103,7 @@ class DoctorTests(unittest.TestCase):
         )
         with mock.patch.object(gl.shutil, "which", return_value="/usr/bin/graphify"), \
              mock.patch.object(gl, "fetch_models", return_value=[cfg.model, cfg.vision_model]), \
+             mock.patch.object(gl, "ollama_extra_available", return_value=True), \
              mock.patch.object(gl, "run_capture", return_value=(0, help_text)):
             self.assertEqual(gl.cmd_doctor(cfg, {"PATH": "/usr/bin:/bin"}), 0)
 
@@ -113,6 +114,7 @@ class DoctorTests(unittest.TestCase):
         )
         with mock.patch.object(gl.shutil, "which", return_value="/usr/bin/graphify"), \
              mock.patch.object(gl, "fetch_models", return_value=["altro:1b"]), \
+             mock.patch.object(gl, "ollama_extra_available", return_value=True), \
              mock.patch.object(gl, "run_capture", return_value=(0, help_text)):
             self.assertEqual(gl.cmd_doctor(cfg, {}), 1)
 
@@ -123,6 +125,7 @@ class DoctorTests(unittest.TestCase):
         )
         with mock.patch.object(gl.shutil, "which", return_value="/usr/bin/graphify"), \
              mock.patch.object(gl, "fetch_models", side_effect=OSError("connection refused")), \
+             mock.patch.object(gl, "ollama_extra_available", return_value=True), \
              mock.patch.object(gl, "run_capture", return_value=(0, help_text)):
             self.assertEqual(gl.cmd_doctor(cfg, {}), 1)
 
@@ -217,6 +220,7 @@ class SkillTests(unittest.TestCase):
         front = text.split("---", 2)[1]
         self.assertIn("name: graphify-local", front)
         self.assertIn("description:", front)
+        self.assertIn("opencode/autoinvoke: true", front)
         self.assertLess(len(text), 6000)
 
     def test_documented_commands_exist(self):
@@ -224,3 +228,69 @@ class SkillTests(unittest.TestCase):
         text = (ROOT / "SKILL.md").read_text()
         for name in expected:
             self.assertIn(f"graphify-local {name}", text)
+
+
+class FixPassTests(unittest.TestCase):
+    def test_loopback_rejects_lookalike_dns(self):
+        self.assertFalse(gl.is_loopback_url("http://127.evil.com/v1"))
+        self.assertFalse(gl.is_loopback_url("http://127.0.0.1.nip.io/v1"))
+        self.assertTrue(gl.is_loopback_url("http://127.1.2.3:11434/v1"))
+        self.assertTrue(gl.is_loopback_url("http://[::1]:11434/v1"))
+
+    def test_detect_images_when_ancestor_is_named_venv(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "venv" / "progetto"
+            root.mkdir(parents=True)
+            (root / "a.png").write_bytes(b"")
+            self.assertTrue(gl.detect_images(root))
+
+    def test_doctor_reports_missing_ollama_extra(self):
+        cfg = gl.load_config({})
+        with mock.patch.object(gl.shutil, "which", return_value="/usr/bin/graphify"), \
+             mock.patch.object(gl, "fetch_models", return_value=[cfg.model, cfg.vision_model]), \
+             mock.patch.object(gl, "ollama_extra_available", return_value=False), \
+             mock.patch.object(gl, "run_capture", return_value=(0, "--code-only --backend --max-concurrency --api-timeout --mode")):
+            self.assertEqual(gl.cmd_doctor(cfg, {}), 1)
+
+    def test_build_requires_ollama_extra(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(gl, "_require_graphify", return_value=True), \
+                 mock.patch.object(gl, "ollama_extra_available", return_value=False), \
+                 mock.patch.object(gl, "run") as run_mock, \
+                 mock.patch("sys.stderr"):
+                rc = gl.cmd_build(Path(d), code_only=False, deep=False, update=False)
+            self.assertEqual(rc, 1)
+            run_mock.assert_not_called()
+
+    def test_label_failure_is_reported(self):
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            (project / "graphify-out").mkdir()
+            (project / "graphify-out" / "graph.json").write_text('{"nodes": [], "links": []}')
+            cfg = gl.load_config({})
+            with mock.patch.object(gl, "_require_graphify", return_value=True), \
+                 mock.patch.object(gl, "fetch_models", return_value=[cfg.model]), \
+                 mock.patch.object(gl, "run_capture", return_value=(0, "warning: community labeling failed; using Community 1 placeholders")), \
+                 mock.patch("sys.stderr") as err:
+                rc = gl.cmd_label(project)
+            self.assertEqual(rc, 1)
+            self.assertTrue(any("label" in str(c).lower() for c in err.write.call_args_list))
+
+    def test_update_validates_local_endpoint(self):
+        with tempfile.TemporaryDirectory() as d, \
+             mock.patch.dict(os.environ, {"GRAPHIFY_LOCAL_BASE_URL": "http://10.0.0.5:11434/v1"}), \
+             mock.patch.object(gl, "_require_graphify", return_value=True), \
+             mock.patch.object(gl, "run") as run_mock:
+            rc = gl.cmd_build(Path(d), code_only=False, deep=False, update=True)
+        self.assertEqual(rc, 2)
+        run_mock.assert_not_called()
+
+    def test_status_does_not_crash_if_file_vanishes(self):
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            out = project / "graphify-out"
+            out.mkdir()
+            graph = out / "graph.json"
+            graph.write_text('{"nodes": [], "links": []}')
+            with mock.patch.object(Path, "stat", side_effect=FileNotFoundError("gone")):
+                self.assertEqual(gl.cmd_status(project), 1)
