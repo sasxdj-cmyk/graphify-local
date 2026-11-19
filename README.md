@@ -4,6 +4,8 @@ A local, offline bridge that lets [Graphify](https://github.com/Graphify-Labs/gr
 build and query codebase knowledge graphs through [Ollama](https://ollama.com),
 with no API keys and no data leaving your machine.
 
+Repository: <https://github.com/sasxdj-cmyk/graphify-local>
+
 ## Requirements
 
 - Python 3.10+
