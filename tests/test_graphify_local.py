@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -142,3 +143,62 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(env["GRAPHIFY_OLLAMA_NUM_CTX"], "32768")
         self.assertEqual(env["GRAPHIFY_OLLAMA_VISION"], "1")
         self.assertNotIn("GRAPHIFY_OLLAMA_VISION", gl.graphify_env(cfg, vision=False))
+
+
+class CliTests(unittest.TestCase):
+    def _fake_graphify(self, bin_dir: Path, record: Path, body: str = "") -> None:
+        script = bin_dir / "graphify"
+        script.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys, pathlib\n"
+            f"pathlib.Path({str(record)!r}).write_text(' '.join(sys.argv[1:]))\n"
+            + body
+        )
+        script.chmod(0o755)
+
+    def test_build_code_only_calls_graphify(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            project = root / "progetto con spazi"
+            project.mkdir()
+            (project / "a.py").write_text("def a(): pass\n")
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            record = root / "args.txt"
+            self._fake_graphify(bin_dir, record)
+            env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "GRAPHIFY_LOCAL_MODEL": "m"}
+            old = dict(os.environ)
+            os.environ.update(env)
+            try:
+                rc = gl.main(["build", str(project), "--code-only"])
+            finally:
+                os.environ.clear()
+                os.environ.update(old)
+            self.assertEqual(rc, 0)
+            self.assertIn("extract", record.read_text())
+            self.assertIn("--code-only", record.read_text())
+
+    def test_build_rejects_remote_url_before_network(self):
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            os.environ["GRAPHIFY_LOCAL_BASE_URL"] = "http://10.0.0.5:11434/v1"
+            try:
+                rc = gl.main(["build", str(project)])
+            finally:
+                del os.environ["GRAPHIFY_LOCAL_BASE_URL"]
+            self.assertEqual(rc, 2)
+
+    def test_query_missing_graph(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(gl.cmd_query("x", Path(d), 2000), 1)
+
+    def test_update_warns_docs_stale(self):
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            (project / "graphify-out").mkdir()
+            (project / "graphify-out" / "graph.json").write_text('{"nodes": [], "edges": []}')
+            with mock.patch.object(gl, "run", return_value=0), \
+                 mock.patch("sys.stderr") as err:
+                rc = gl.cmd_build(project, code_only=False, deep=False, update=True)
+            self.assertEqual(rc, 0)
+            self.assertIn("documenti", err.write.call_args_list[0].args[0].lower())

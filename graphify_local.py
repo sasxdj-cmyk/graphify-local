@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
 import subprocess
+import sys
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -257,3 +259,181 @@ def cmd_doctor(cfg: Config, env: Mapping[str, str] | None = None) -> int:
                 ok = False
 
     return 0 if ok else 1
+
+
+def _graph_path(path: Path) -> Path:
+    return Path(path) / "graphify-out" / "graph.json"
+
+
+def _print_summary(path: Path) -> None:
+    graph_path = _graph_path(path)
+    print(f"grafo: {graph_path}")
+    if graph_path.is_file():
+        print(summarize_graph(graph_path))
+
+
+def _require_graphify() -> bool:
+    if shutil.which("graphify") is None:
+        print("errore: graphify non trovato nel PATH", file=sys.stderr)
+        print("installa con: uv tool install graphifyy", file=sys.stderr)
+        return False
+    return True
+
+
+def _require_model(cfg: Config, model: str) -> bool:
+    try:
+        models = fetch_models(cfg.base_url, timeout=5.0)
+    except (OSError, ValueError) as exc:
+        print(f"errore: Ollama non raggiungibile su {cfg.base_url}: {exc}", file=sys.stderr)
+        print("avvia con: systemctl start ollama", file=sys.stderr)
+        return False
+    if not model_present(models, model):
+        print(f"errore: modello {model} assente", file=sys.stderr)
+        print(f"disponibili: {', '.join(models) or 'nessuno'}", file=sys.stderr)
+        print(f"installa con: ollama pull {model}", file=sys.stderr)
+        return False
+    return True
+
+
+def cmd_build(path: Path, *, code_only: bool, deep: bool, update: bool) -> int:
+    project = Path(path).resolve()
+    cfg = load_config()
+
+    if update:
+        print(
+            "attenzione: update ri-estrae solo il codice; i documenti non vengono aggiornati",
+            file=sys.stderr,
+        )
+        if not _require_graphify():
+            return 1
+        rc = run(build_update_command(project))
+        if rc != 0:
+            return rc
+        _print_summary(project)
+        return 0
+
+    if not _require_graphify():
+        return 1
+
+    if code_only:
+        rc = run(build_extract_command(project, cfg.model, cfg, code_only=True, deep=deep))
+        if rc != 0:
+            return rc
+        _print_summary(project)
+        return 0
+
+    if not is_loopback_url(cfg.base_url):
+        print(
+            f"errore: endpoint non locale: {cfg.base_url}",
+            file=sys.stderr,
+        )
+        print("sono ammessi solo localhost, 127.0.0.1 e ::1", file=sys.stderr)
+        return 2
+
+    model, vision = resolve_model(cfg, project, code_only=False)
+    if not _require_model(cfg, model):
+        return 1
+
+    env = graphify_env(cfg, vision=vision)
+    rc = run(
+        build_extract_command(project, model, cfg, code_only=False, deep=deep),
+        env=env,
+    )
+    if rc != 0:
+        return rc
+
+    rc = run(build_label_command(project, model, cfg), env=env)
+    if rc != 0:
+        return rc
+
+    _print_summary(project)
+    return 0
+
+
+def cmd_query(question: str, path: Path, budget: int) -> int:
+    project = Path(path).resolve()
+    graph_path = _graph_path(project)
+    if not graph_path.is_file():
+        print(f"errore: grafo assente: {graph_path}", file=sys.stderr)
+        print("esegui prima: graphify-local build", file=sys.stderr)
+        return 1
+    if not _require_graphify():
+        return 1
+    return run(
+        [
+            "graphify",
+            "query",
+            question,
+            "--graph",
+            str(graph_path),
+            "--budget",
+            str(budget),
+        ]
+    )
+
+
+def cmd_label(path: Path) -> int:
+    project = Path(path).resolve()
+    graph_path = _graph_path(project)
+    if not graph_path.is_file():
+        print(f"errore: grafo assente: {graph_path}", file=sys.stderr)
+        print("esegui prima: graphify-local build", file=sys.stderr)
+        return 1
+    if not _require_graphify():
+        return 1
+    cfg = load_config()
+    if not is_loopback_url(cfg.base_url):
+        print(f"errore: endpoint non locale: {cfg.base_url}", file=sys.stderr)
+        return 2
+    if not _require_model(cfg, cfg.model):
+        return 1
+    return run(build_label_command(project, cfg.model, cfg), env=graphify_env(cfg, vision=False))
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="graphify-local",
+        description="Graphify con Ollama locale: nessuna API key, nessun dato fuori dalla macchina.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_doctor = sub.add_parser("doctor", help="verifica prerequisiti e configurazione")
+    p_doctor.set_defaults(func=lambda args: cmd_doctor(load_config()))
+
+    p_build = sub.add_parser("build", help="costruisci o aggiorna il grafo")
+    p_build.add_argument("path", nargs="?", default=".")
+    p_build.add_argument("--code-only", action="store_true", help="solo AST locale, nessun LLM")
+    p_build.add_argument("--deep", action="store_true", help="estrazione documenti piu' profonda")
+    p_build.add_argument("--update", action="store_true", help="re-estrai solo i file di codice cambiati")
+    p_build.set_defaults(
+        func=lambda args: cmd_build(
+            Path(args.path),
+            code_only=args.code_only,
+            deep=args.deep,
+            update=args.update,
+        )
+    )
+
+    p_query = sub.add_parser("query", help="interroga il grafo senza LLM")
+    p_query.add_argument("question")
+    p_query.add_argument("path", nargs="?", default=".")
+    p_query.add_argument("--budget", type=int, default=2000)
+    p_query.set_defaults(func=lambda args: cmd_query(args.question, Path(args.path), args.budget))
+
+    p_label = sub.add_parser("label", help="rinomina le community con Ollama")
+    p_label.add_argument("path", nargs="?", default=".")
+    p_label.set_defaults(func=lambda args: cmd_label(Path(args.path)))
+
+    p_status = sub.add_parser("status", help="mostra stato del grafo")
+    p_status.add_argument("path", nargs="?", default=".")
+    p_status.set_defaults(func=lambda args: cmd_status(Path(args.path)))
+
+    p_config = sub.add_parser("config", help="mostra la configurazione effettiva")
+    p_config.set_defaults(func=lambda args: cmd_config(load_config()))
+
+    args = parser.parse_args(argv)
+    try:
+        return int(args.func(args))
+    except ValueError as exc:
+        print(f"errore: {exc}", file=sys.stderr)
+        return 2
